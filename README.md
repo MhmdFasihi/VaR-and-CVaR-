@@ -28,12 +28,6 @@ This repository contains a Python script to calculate Value at Risk (VaR) and Co
    ```
 
 2. **Install the required packages:**
-   You can install the required Python packages using `pip`:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-   Make sure your `requirements.txt` includes the following packages:
    ```
    pandas
    numpy
