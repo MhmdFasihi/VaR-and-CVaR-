@@ -76,7 +76,6 @@ VaR: 0.0344
 CVaR: 0.0398
 ```
 
-![Visualization](path/to/your/visualization.png)
 
 ## Methods
 
