@@ -1,142 +1,128 @@
-# Importing required libraries
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import yfinance as yf
 from scipy.stats import norm
 
-# Fetch historical data for a single ticker
-def fetch_data(ticker, start, end):
-    data = yf.download(ticker, start=start, end=end)['Adj Close']
+def fetch_data(tickers, start, end):
+    """Fetch data for multiple tickers"""
+    data = pd.DataFrame()
+    for ticker in tickers:
+        temp = yf.download(ticker, start=start, end=end)['Adj Close']
+        data[ticker] = temp
     return data
 
-# Calculate logarithmic returns based on frequency
 def preprocess_data(data, frequency='daily'):
+    """Calculate log returns for multiple assets"""
     if frequency == 'daily':
         log_returns = np.log(data / data.shift(1))
     elif frequency == 'weekly':
         log_returns = np.log(data.resample('W').last() / data.resample('W').last().shift(1))
     elif frequency == 'monthly':
         log_returns = np.log(data.resample('M').last() / data.resample('M').last().shift(1))
-    log_returns = log_returns.dropna()
-    return log_returns
+    return log_returns.dropna()
 
-# Monte Carlo simulation to estimate future returns
-def monte_carlo_simulation(returns, num_simulations=10000):
-    mean = returns.mean()
-    std_dev = returns.std()
-    simulated_returns = np.random.normal(mean, std_dev, (num_simulations, len(returns)))
-    return simulated_returns
+def calculate_metrics(data, log_returns, confidence_level=95):
+    """Calculate all risk metrics for each asset"""
+    metrics = {}
+    
+    for column in log_returns.columns:
+        # Calculate simple returns for return metrics
+        simple_returns = data[column].pct_change().dropna()
+        
+        # Calculate cumulative return (using simple returns)
+        cumulative_return = (np.prod(1 + simple_returns) - 1) * 100
+        
+        # Calculate average daily return
+        avg_daily_return = simple_returns.mean() * 100
+        
+        # Calculate volatility (using log returns for better statistical properties)
+        daily_vol = log_returns[column].std()
+        annualized_vol = daily_vol * np.sqrt(252)
+        
+        # Historical VaR and CVaR (using log returns)
+        hist_var = -np.percentile(log_returns[column], 100 - confidence_level)
+        losses = -log_returns[column]
+        var_threshold = np.percentile(losses, confidence_level)
+        hist_cvar = losses[losses >= var_threshold].mean()
+        
+        # Parametric VaR and CVaR (using log returns)
+        mean = log_returns[column].mean()
+        std_dev = log_returns[column].std()
+        param_var = -norm.ppf(1 - confidence_level / 100) * std_dev + mean
+        param_cvar = -mean + std_dev * norm.pdf(norm.ppf(confidence_level / 100)) / (1 - confidence_level / 100)
+        
+        metrics[column] = {
+            'Cumulative Return (%)': cumulative_return,
+            'Average Daily Return (%)': avg_daily_return,
+            'Daily Volatility (%)': daily_vol * 100,
+            'Annualized Volatility (%)': annualized_vol * 100,
+            f'Historical VaR {confidence_level}% (%)': hist_var * 100,
+            f'Historical CVaR {confidence_level}% (%)': hist_cvar * 100,
+            f'Parametric VaR {confidence_level}% (%)': param_var * 100,
+            f'Parametric CVaR {confidence_level}% (%)': param_cvar * 100
+        }
+    
+    return pd.DataFrame.from_dict(metrics, orient='index')
 
-# Calculate historical VaR and CVaR
-def calculate_historical_var_cvar(returns, confidence_level=95):
-    var = -np.percentile(returns, 100 - confidence_level)
-    losses = -returns
-    var_threshold = np.percentile(losses, confidence_level)
-    cvar = losses[losses >= var_threshold].mean()
-    return var, cvar
-
-# Calculate parametric VaR and CVaR
-def calculate_parametric_var_cvar(returns, confidence_level=95):
-    mean = returns.mean()
-    std_dev = returns.std()
-    var = -norm.ppf(1 - confidence_level / 100) * std_dev + mean
-    cvar = -mean + std_dev * norm.pdf(norm.ppf(confidence_level / 100)) / (1 - confidence_level / 100)
-    return var, cvar
-
-# Calculate VaR and CVaR using Monte Carlo simulation
-def calculate_monte_carlo_var_cvar(simulated_returns, confidence_level=95):
-    var = -np.percentile(simulated_returns, 100 - confidence_level, axis=0)
-    losses = -simulated_returns
-    var_threshold = np.percentile(losses, confidence_level, axis=0)
-    cvar = losses[losses >= var_threshold].mean(axis=0)
-    return var, cvar
-
-# Main function to calculate and display VaR and CVaR
-def main():
-    # User inputs
-    ticker = 'ETH-USD'  # Ticker for Ethereum
-    start_date = '2019-01-01'  # Start date for data retrieval
-    end_date = '2023-01-01'  # End date for data retrieval
-    frequency = 'monthly'  # Options: 'daily', 'weekly', 'monthly'
-    confidence_level = 99  # Options: 95, 99
-    method = 'historical'  # Options: 'historical', 'parametric', 'monte carlo'
+def plot_metrics(data, log_returns, metrics, confidence_level):
+    """Create visualization for multiple assets"""
+    n_assets = len(log_returns.columns)
+    fig = plt.figure(figsize=(15, 5 * n_assets))
     
-    # Fetch and preprocess data
-    data = fetch_data(ticker, start=start_date, end=end_date)
-    log_returns = preprocess_data(data, frequency)
-    
-    # Check data
-    print(f"Data for {ticker} from {start_date} to {end_date} with {frequency} frequency:")
-    print(log_returns.describe())
-    
-    # Calculate VaR and CVaR based on selected method
-    if method == 'historical':
-        var, cvar = calculate_historical_var_cvar(log_returns, confidence_level)
-    elif method == 'parametric':
-        var, cvar = calculate_parametric_var_cvar(log_returns, confidence_level)
-    elif method == 'monte carlo':
-        simulated_returns = monte_carlo_simulation(log_returns)
-        var, cvar = calculate_monte_carlo_var_cvar(simulated_returns, confidence_level)
-    
-    # Convert var and cvar to scalar values if they are arrays
-    if isinstance(var, np.ndarray):
-        var = var.mean()
-    if isinstance(cvar, np.ndarray):
-        cvar = cvar.mean()
-    
-    # Display results
-    print(f"\n{frequency.capitalize()} VaR and CVaR for {ticker} at {confidence_level}% confidence level using {method.capitalize()} method:")
-    print(f"VaR: {var:.4f}")
-    print(f"CVaR: {cvar:.4f}")
-    
-    # Visualization
-    plt.figure(figsize=(14, 7))
-    
-    # Plot log returns
-    plt.subplot(2, 2, 1)
-    plt.plot(log_returns, color='blue')
-    plt.title(f'{frequency.capitalize()} Log Returns of {ticker}')
-    plt.xlabel('Date')
-    plt.ylabel('Log Returns')
-    
-    # Plot histogram of returns or simulated returns based on the method
-    plt.subplot(2, 2, 2)
-    if method == 'monte carlo':
-        plt.hist(simulated_returns.flatten(), bins=50, color='blue', alpha=0.7)
-    else:
-        plt.hist(log_returns, bins=50, color='blue', alpha=0.7)
-    plt.title('Histogram of Returns')
-    plt.xlabel('Returns')
-    plt.ylabel('Frequency')
-    
-    # Plot VaR
-    plt.subplot(2, 2, 3)
-    if method == 'monte carlo':
-        plt.hist(simulated_returns.flatten(), bins=50, color='blue', alpha=0.7)
-    else:
-        plt.hist(log_returns, bins=50, color='blue', alpha=0.7)
-    plt.axvline(x=-var, color='r', linestyle='--', label=f'VaR ({confidence_level}%)')
-    plt.title('Value at Risk (VaR)')
-    plt.xlabel('Returns')
-    plt.ylabel('Frequency')
-    plt.legend()
-    
-    # Plot CVaR
-    plt.subplot(2, 2, 4)
-    if method == 'monte carlo':
-        plt.hist(simulated_returns.flatten(), bins=50, color='blue', alpha=0.7)
-    else:
-        plt.hist(log_returns, bins=50, color='blue', alpha=0.7)
-    plt.axvline(x=-cvar, color='g', linestyle='--', label=f'CVaR ({confidence_level}%)')
-    plt.title('Conditional Value at Risk (CVaR)')
-    plt.xlabel('Returns')
-    plt.ylabel('Frequency')
-    plt.legend()
+    for idx, asset in enumerate(log_returns.columns, 1):
+        # Plot returns distribution
+        plt.subplot(n_assets, 2, 2*idx-1)
+        plt.hist(log_returns[asset], bins=50, density=True, alpha=0.7, label='Returns Distribution')
+        plt.axvline(x=-metrics.loc[asset, f'Historical VaR {confidence_level}% (%)']/100,
+                   color='r', linestyle='--', label=f'Historical VaR {confidence_level}%')
+        plt.axvline(x=-metrics.loc[asset, f'Historical CVaR {confidence_level}% (%)']/100,
+                   color='g', linestyle='--', label=f'Historical CVaR {confidence_level}%')
+        plt.title(f'{asset} Returns Distribution and Risk Metrics')
+        plt.legend()
+        
+        # Plot cumulative returns
+        plt.subplot(n_assets, 2, 2*idx)
+        simple_returns = data[asset].pct_change().dropna()
+        cum_returns = (1 + simple_returns).cumprod() - 1
+        plt.plot(cum_returns * 100, label='Cumulative Returns (%)')
+        plt.title(f'{asset} Cumulative Returns')
+        plt.ylabel('Cumulative Returns (%)')
+        plt.legend()
     
     plt.tight_layout()
-    plt.show()
+    return fig
 
-# Run the main function
+def main():
+    # User inputs
+    tickers = ['BTC-USD', 'LINK-USD']  # Add more tickers here
+    start_date = '2024-05-24'
+    end_date = '2024-11-24'
+    frequency = 'daily'
+    confidence_level = 95
+    
+    # Fetch and process data
+    print(f"Fetching data for {', '.join(tickers)}...")
+    data = fetch_data(tickers, start_date, end_date)
+    log_returns = preprocess_data(data, frequency)
+    
+    # Calculate metrics
+    print("\nCalculating risk metrics...")
+    metrics_df = calculate_metrics(data, log_returns, confidence_level)
+    
+    # Save metrics to CSV
+    output_file = 'crypto_risk_metrics.csv'
+    metrics_df.to_csv(output_file)
+    print(f"\nMetrics saved to {output_file}")
+    print("\nMetrics Summary:")
+    print(metrics_df)
+    
+    # Create and save visualization
+    print("\nGenerating visualizations...")
+    fig = plot_metrics(data, log_returns, metrics_df, confidence_level)
+    plt.savefig('crypto_risk_analysis.png')
+    plt.close()
+    print("Visualizations saved as 'crypto_risk_analysis.png'")
+
 if __name__ == "__main__":
     main()
